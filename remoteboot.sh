@@ -108,13 +108,13 @@ update_submodules()
 
 usage_check()
 {
-	if [ "$1" != "prep" ] && [ "$1" != "boot" ] && [ "$1" != "firmware" ] || ([ "$1" = "boot" ] && ([ "$2" = "" ] || [ "$3" = "" ]);); then
+	if [ "$1" != "prep" ] && [ "$1" != "boot" ] && [ "$1" != "firmware" ] || ([ "$1" = "boot" ] && [ "$2" = "" ];); then
 		if [ "$1" = "build" ]; then
 			exit 0;
 		fi
 
 		printf "Usage: \t$0\n\tprep\t\t\t\t\t\tfor preparing bootchain files\n";
-		printf "\tboot <m1n1-idevice.macho> <monitor-stub.macho>\tBoot m1n1\n";
+		printf "\tboot <m1n1-idevice.macho> [monitor-stub.macho]\tBoot m1n1\n";
 		printf "\tfirmware\t\tGather firmware"
 
 		if [ "$1" = "help" ]; then
@@ -195,6 +195,25 @@ prepare_boot_files()
 	ipsw ${ipsw_dl_args} --pattern "^${fw_prefix}BuildManifest.plist"'$'
 	manifest="$(find "$(pwd)" -name BuildManifest.plist -type f)"
 
+	DTRE_PATTERN="$(awk "/""$MODEL""/{x=1}x&&/DeviceTree[.]/{print;exit}" $manifest | sed -E 's/<string>(.*)<\/string>/\1/' | tr -d '\t')"
+	if a12a13_postpwned_cache_params; then
+		ipsw ${ipsw_dl_args} --pattern "^${fw_prefix}${DTRE_PATTERN}"'$'
+		DTRE_PATH="$(find "$(pwd)" -name "$(basename $DTRE_PATTERN)" -type f)"
+
+		echo "[*] Downloading public PAC-era iBoot IM4P"
+		ipsw download ipsw --build "$A12A13_IBOOT_BUILD" -d "$PRODUCT" --pattern "$A12A13_IBOOT_PATTERN"
+
+		A12A13_IBOOT_PATH="$(find "$(pwd)" -name "$A12A13_IBOOT_BASENAME" -type f | head -n 1)"
+
+		if [ "$A12A13_IBOOT_PATH" = "" ] || [ ! -f "$A12A13_IBOOT_PATH" ]; then
+			echo "Missing downloaded A12/A13 iBoot IM4P: $A12A13_IBOOT_BASENAME"
+			return 1
+		fi
+
+		prepare_a12a13_postpwned_boot_files "$A12A13_IBOOT_PATH" "$DTRE_PATH"
+		return $?
+	fi
+
 	IBSS_PATTERN="$(awk "/""$MODEL""/{x=1}x&&/iBSS[.]/{print;exit}" $manifest | sed -E 's/<string>(.*)<\/string>/\1/' | tr -d '\t')"
 	ipsw ${ipsw_dl_args} --pattern "^${fw_prefix}${IBSS_PATTERN}"'$'
 	IBSS_PATH="$(find "$(pwd)" -name "$(basename $IBSS_PATTERN)" -type f)"
@@ -205,7 +224,6 @@ prepare_boot_files()
 		IBEC_PATH="$(find "$(pwd)" -name "$(basename $IBEC_PATTERN)" -type f)"
 	fi
 
-	DTRE_PATTERN="$(awk "/""$MODEL""/{x=1}x&&/DeviceTree[.]/{print;exit}" $manifest | sed -E 's/<string>(.*)<\/string>/\1/' | tr -d '\t')"
 	ipsw ${ipsw_dl_args} --pattern "^${fw_prefix}${DTRE_PATTERN}"'$'
 	DTRE_PATH="$(find "$(pwd)" -name "$(basename $DTRE_PATTERN)" -type f)"
 
@@ -233,8 +251,159 @@ prepare_boot_files()
 	ipsw img4 create --input "$WORK/DeviceTree_${MODEL}_${PRODUCT}.bin" --type rdtr --im4m "${SCRIPT_PATH}/im4m/${CPID}.im4m" --output "${SCRIPT_PATH}/cache/RestoreDeviceTree_${MODEL}_${PRODUCT}.img4"
 }
 
+
+a12a13_postpwned_cache_params()
+{
+	case "${CPID}:${MODEL}:${PRODUCT}" in
+		0x8030:d421ap:iPhone12,3|8030:d421ap:iPhone12,3)
+			A12A13_IBOOT_BUILD="${A12A13_IBOOT_BUILD:-22A3354}"
+			A12A13_IBOOT_BASENAME="iBoot.d421.RELEASE.im4p"
+			A12A13_IBOOT_PATTERN="Firmware/all_flash.*/iBoot.d421.RELEASE.im4p"
+			A12A13_PACSAFE_IBOOT="${SCRIPT_PATH}/cache/iBoot_${MODEL}_${PRODUCT}_pacsafe.raw"
+			A12A13_RESTORE_DT="${SCRIPT_PATH}/cache/RestoreDeviceTree_${MODEL}_${PRODUCT}.img4"
+			A12A13_IM4M="${SCRIPT_PATH}/im4m/0x8015.im4m"
+			A12A13_SIGCHECK_PATCH_OFF=0x2df70
+			A12A13_SIGCHECK_EXPECTED_OLD=0xaa1403e0
+			A12A13_SIGCHECK_RETAB_OFF=0x2df90
+			A12A13_SIGCHECK_EXPECTED_RETAB=0xd65f0fff
+			return 0
+			;;
+	esac
+
+	return 1
+}
+
+a12a13_require_postpwned()
+{
+	if ! command -v lsusb >/dev/null 2>&1; then
+		echo "Missing lsusb"
+		return 1
+	fi
+
+	if ! command -v rg >/dev/null 2>&1; then
+		echo "Missing rg"
+		return 1
+	fi
+
+	SERIAL="$(lsusb -v -d 05ac:1227 2>/dev/null | rg 'iSerial' || true)"
+	echo "$SERIAL"
+
+	if ! printf '%s\n' "$SERIAL" | rg -q 'PWND'; then
+		echo "Device is not post-pwned: iSerial does not contain PWND"
+		return 1
+	fi
+
+	return 0
+}
+
+prepare_a12a13_postpwned_boot_files()
+{
+	IBOOT_IMG4="$1"
+	DTRE_IMG4="$2"
+
+	if ! a12a13_postpwned_cache_params; then
+		return 1
+	fi
+
+	if ! a12a13_require_postpwned; then
+		return 1
+	fi
+
+	if [ ! -f "$A12A13_IM4M" ]; then
+		echo "Missing IM4M: $A12A13_IM4M"
+		return 1
+	fi
+
+	mkdir -p "${SCRIPT_PATH}/cache"
+
+	A12A13_RAW_IBOOT="${WORK}/iBoot_${MODEL}_${PRODUCT}.raw"
+	A12A13_RAW_DT="${WORK}/DeviceTree_${MODEL}_${PRODUCT}.bin"
+
+	echo "[*] Extracting public PAC-era iBoot payload"
+	if ! ipsw img4 im4p extract -o "$A12A13_RAW_IBOOT" "$IBOOT_IMG4"; then
+		echo "Failed to extract PAC-era iBoot payload"
+		return 1
+	fi
+
+	echo "[*] Preparing PAC-safe cached iBoot"
+	if ! "${SCRIPT_PATH}/scripts/a12a13/prep-pacsafe-iboot.sh" \
+		"$A12A13_RAW_IBOOT" \
+		"$A12A13_PACSAFE_IBOOT" \
+		"$A12A13_SIGCHECK_PATCH_OFF" \
+		"$A12A13_SIGCHECK_EXPECTED_OLD" \
+		"$A12A13_SIGCHECK_RETAB_OFF" \
+		"$A12A13_SIGCHECK_EXPECTED_RETAB"; then
+		echo "Failed to prepare PAC-safe cached iBoot"
+		return 1
+	fi
+
+	echo "[*] Preparing cached RestoreDeviceTree"
+	if ! ipsw img4 im4p extract -o "$A12A13_RAW_DT" "$DTRE_IMG4"; then
+		echo "Failed to extract DeviceTree payload"
+		return 1
+	fi
+
+	if ! ipsw img4 create --input "$A12A13_RAW_DT" --type rdtr --im4m "$A12A13_IM4M" --output "$A12A13_RESTORE_DT"; then
+		echo "Failed to create cached RestoreDeviceTree"
+		return 1
+	fi
+
+	echo "[*] Cached A12/A13 boot files:"
+	ls -lh "$A12A13_PACSAFE_IBOOT" "$A12A13_RESTORE_DT"
+	return 0
+}
+
+boot_a12a13_postpwned()
+{
+	if ! a12a13_postpwned_cache_params; then
+		return 1
+	fi
+
+	if [ ! -f "$A12A13_PACSAFE_IBOOT" ]; then
+		echo "Missing cached PAC-safe iBoot: $A12A13_PACSAFE_IBOOT"
+		return 1
+	fi
+
+	if [ ! -f "$A12A13_RESTORE_DT" ]; then
+		echo "Missing cached RestoreDeviceTree: $A12A13_RESTORE_DT"
+		return 1
+	fi
+
+	if [ ! -f "$A12A13_IM4M" ]; then
+		echo "Missing IM4M: $A12A13_IM4M"
+		return 1
+	fi
+
+	WORK="$(mktemp -d)"
+	RESTORE_TC="${WORK}/RestoreTrustCache_${MODEL}_${PRODUCT}.img4"
+	RESTORE_RKRN="${WORK}/RestoreKernelCache_${MODEL}_${PRODUCT}.img4"
+
+	ipsw img4 create --input "${SCRIPT_PATH}/empty_trustcache.bin" --type rtsc --im4m "$A12A13_IM4M" --output "$RESTORE_TC"
+
+	if [ "$3" != "" ]; then
+		ipsw img4 create --input "$2" --type rkrn --extra "$3" --compress lzss --im4m "$A12A13_IM4M" --output "$RESTORE_RKRN"
+	else
+		ipsw img4 create --input "$2" --type rkrn --compress none --im4m "$A12A13_IM4M" --output "$RESTORE_RKRN"
+	fi
+
+	"${SCRIPT_PATH}/scripts/a12a13/boot-postpwned.sh" \
+		"$A12A13_PACSAFE_IBOOT" \
+		"$A12A13_RESTORE_DT" \
+		"$RESTORE_TC" \
+		"$RESTORE_RKRN"
+
+	return $?
+}
+
+
 boot_device()
 {
+	if [ "$1" = "boot" ] && a12a13_postpwned_cache_params; then
+		boot_a12a13_postpwned "$@"
+		return $?
+	fi
+
+
 	if ! [ -f "$SCRIPT_PATH/cache/RestoreDeviceTree_${MODEL}_${PRODUCT}.img4" ]; then
 		rm -rf "$WORK";
 		echo "[-] Prepare boot files first!"
@@ -339,6 +508,8 @@ hKernelFWExtractor_build
 usage_check "$@"
 get_firmware "$@"
 dfu_poll
-gaster_pwn
 get_device_info
+if ! a12a13_postpwned_cache_params; then
+	gaster_pwn
+fi
 remote_boot "$@"
