@@ -13,7 +13,7 @@ compile however, you must have clang and GNU make installed.
 - `./remoteboot.sh build` - Compile vendored dependencies
 - `./remoteboot.sh prep` - prepare boot files (requires internet connection)
 - `./remoteboot.sh boot /path/to/m1n1-idevice.macho [/path/to/monitor-stub.macho]` - boot
-- `./remoteboot.sh firmware` - Download firmware in `/lib/firmware` layout.
+- `./remoteboot.sh firmware` - Download firmware in `/lib/firmware` layout (does not work on A12/A13 at this moment).
 
 Preparation needs to be ran once for each model of device.
 The `m1n1-idevice.macho` and `monitor-stub.macho` are generated as part of the
