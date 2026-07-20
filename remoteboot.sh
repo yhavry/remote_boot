@@ -252,20 +252,37 @@ prepare_boot_files()
 }
 
 
+a12a13_postpwned_common_cache_params()
+{
+	A12A13_IBOOT_BUILD="${A12A13_IBOOT_BUILD:-22A3354}"
+	A12A13_BOOT_BOARD="$(printf '%s' "$MODEL" | tr '[:upper:]' '[:lower:]')"
+	A12A13_BOOT_BOARD="${A12A13_BOOT_BOARD%ap}"
+	A12A13_IBOOT_BASENAME="iBoot.$A12A13_BOOT_BOARD.RELEASE.im4p"
+	A12A13_IBOOT_PATTERN="Firmware/all_flash.*/$A12A13_IBOOT_BASENAME"
+	A12A13_PACSAFE_IBOOT="${SCRIPT_PATH}/cache/iBoot_${MODEL}_${PRODUCT}_pacsafe.raw"
+	A12A13_RESTORE_DT="${SCRIPT_PATH}/cache/RestoreDeviceTree_${MODEL}_${PRODUCT}.img4"
+	A12A13_IM4M="${SCRIPT_PATH}/im4m/0x8015.im4m"
+	A12A13_SIGCHECK_PATCH_OFF=0x2df70
+	A12A13_SIGCHECK_EXPECTED_OLD=0xaa1403e0
+	A12A13_SIGCHECK_RETAB_OFF=0x2df90
+	A12A13_SIGCHECK_EXPECTED_RETAB=0xd65f0fff
+}
+
 a12a13_postpwned_cache_params()
 {
 	case "${CPID}:${MODEL}:${PRODUCT}" in
-		0x8030:d421ap:iPhone12,3|8030:d421ap:iPhone12,3)
-			A12A13_IBOOT_BUILD="${A12A13_IBOOT_BUILD:-22A3354}"
-			A12A13_IBOOT_BASENAME="iBoot.d421.RELEASE.im4p"
-			A12A13_IBOOT_PATTERN="Firmware/all_flash.*/iBoot.d421.RELEASE.im4p"
-			A12A13_PACSAFE_IBOOT="${SCRIPT_PATH}/cache/iBoot_${MODEL}_${PRODUCT}_pacsafe.raw"
-			A12A13_RESTORE_DT="${SCRIPT_PATH}/cache/RestoreDeviceTree_${MODEL}_${PRODUCT}.img4"
-			A12A13_IM4M="${SCRIPT_PATH}/im4m/0x8015.im4m"
-			A12A13_SIGCHECK_PATCH_OFF=0x2df70
-			A12A13_SIGCHECK_EXPECTED_OLD=0xaa1403e0
-			A12A13_SIGCHECK_RETAB_OFF=0x2df90
-			A12A13_SIGCHECK_EXPECTED_RETAB=0xd65f0fff
+		0x8030:*ap:*|8030:*ap:*|0x8030:*AP:*|8030:*AP:*)
+			a12a13_postpwned_common_cache_params || return 1
+			return 0
+			;;
+		0x8020:*ap:*|8020:*ap:*|0x8020:*AP:*|8020:*AP:*|\
+		0x8027:*ap:*|8027:*ap:*|0x8027:*AP:*|8027:*AP:*)
+			if [ "${REMOTE_BOOT_EXPERIMENTAL_A12:-0}" != "1" ]; then
+				echo "ERROR: A12 boot-chain selection is experimental"
+				echo "Set REMOTE_BOOT_EXPERIMENTAL_A12=1 to enable it"
+				return 1
+			fi
+			a12a13_postpwned_common_cache_params || return 1
 			return 0
 			;;
 	esac
